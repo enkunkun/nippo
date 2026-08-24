@@ -443,6 +443,11 @@ fn format_source_line(source: &SourceMeta) -> String {
     format!("requested {} | resolved {}", source.requested, resolved)
 }
 
+struct FocusEvent<'a> {
+    timestamp: DateTime<Utc>,
+    session_id: &'a str,
+}
+
 struct FocusInterval<'a> {
     start: DateTime<Utc>,
     end: DateTime<Utc>,
@@ -455,64 +460,35 @@ struct FocusCalculation {
     main_work_window: Option<(DateTime<Utc>, DateTime<Utc>)>,
 }
 
-/// Aggregate uninterrupted work blocks independently from the broader stats
-/// fold. A gap of 30 minutes or more starts a new block, and a project switch
-/// is counted only between adjacent sessions that remain in the same block.
+/// Aggregate uninterrupted work blocks and context switches.
+///
+/// - Focus blocks and the main work window are detected from individual
+///   message timestamps (event-based). Splitting on events instead of on
+///   whole-session ranges lets a single long-running session with internal
+///   idle gaps show up as multiple focus blocks, so a background session
+///   that stays open all day does not silently pin the "longest block" to
+///   the full day.
+/// - Context switches stay session-based. Every parallel session generates
+///   its own timestamp stream, so counting switches per interleaved event
+///   would explode with the number of parallel sessions. Session-boundary
+///   counting keeps the metric interpretable across single- and
+///   multi-source setups.
+///
+/// A gap of 30 minutes or more starts a new block (or ends a session's
+/// contribution to switch counting).
 fn compute_focus(sessions: &[RawSession]) -> FocusCalculation {
-    let mut intervals: Vec<FocusInterval<'_>> = sessions
-        .iter()
-        .filter_map(|session| {
-            let (start, end) = parsed_session_range(session)?;
-            Some(FocusInterval {
-                start,
-                end,
-                project: &session.project,
-                session_id: &session.session_id,
-            })
-        })
-        .collect();
-    intervals.sort_by(|left, right| {
-        left.start
-            .cmp(&right.start)
-            .then_with(|| left.session_id.cmp(right.session_id))
-    });
-
-    let Some(first) = intervals.first() else {
-        return FocusCalculation {
-            stats: FocusStats::default(),
-            main_work_window: None,
-        };
-    };
-
-    let mut context_switches = 0usize;
-    let mut focus_blocks = 1usize;
-    let mut block_start = first.start;
-    let mut block_end = first.end;
-    let mut longest_window = (block_start, block_end);
-    let mut previous_project = first.project;
-
-    for interval in intervals.iter().skip(1) {
-        let gap = interval.start - block_end;
-        if gap < chrono::Duration::minutes(30) {
-            if interval.project != previous_project {
-                context_switches += 1;
-            }
-            if interval.end > block_end {
-                block_end = interval.end;
-            }
-        } else {
-            if block_end - block_start > longest_window.1 - longest_window.0 {
-                longest_window = (block_start, block_end);
-            }
-            focus_blocks += 1;
-            block_start = interval.start;
-            block_end = interval.end;
+    let (events, intervals) = collect_focus_inputs(sessions);
+    let main_work_window = compute_focus_blocks(&events);
+    let (focus_blocks, longest_window) = match main_work_window {
+        Some(window) => (count_focus_blocks(&events), window),
+        None => {
+            return FocusCalculation {
+                stats: FocusStats::default(),
+                main_work_window: None,
+            };
         }
-        previous_project = interval.project;
-    }
-    if block_end - block_start > longest_window.1 - longest_window.0 {
-        longest_window = (block_start, block_end);
-    }
+    };
+    let context_switches = count_context_switches(&intervals);
 
     FocusCalculation {
         stats: FocusStats {
@@ -522,6 +498,132 @@ fn compute_focus(sessions: &[RawSession]) -> FocusCalculation {
         },
         main_work_window: Some(longest_window),
     }
+}
+
+fn collect_focus_inputs<'a>(
+    sessions: &'a [RawSession],
+) -> (Vec<FocusEvent<'a>>, Vec<FocusInterval<'a>>) {
+    let mut events: Vec<FocusEvent<'a>> = Vec::new();
+    let mut intervals: Vec<FocusInterval<'a>> = Vec::new();
+
+    for session in sessions {
+        let timestamps = session
+            .user_entries
+            .iter()
+            .map(|entry| entry.timestamp.as_str())
+            .chain(
+                session
+                    .assistant_entries
+                    .iter()
+                    .map(|entry| entry.timestamp.as_str()),
+            );
+        let mut collected: Vec<DateTime<Utc>> = Vec::new();
+        let mut parsed_all = true;
+        for timestamp in timestamps {
+            match DateTime::parse_from_rfc3339(timestamp) {
+                Ok(dt) => collected.push(dt.with_timezone(&Utc)),
+                Err(_) => {
+                    parsed_all = false;
+                    break;
+                }
+            }
+        }
+        if !parsed_all || collected.is_empty() {
+            continue;
+        }
+
+        let min = *collected.iter().min().expect("collected is non-empty");
+        let max = *collected.iter().max().expect("collected is non-empty");
+        intervals.push(FocusInterval {
+            start: min,
+            end: max,
+            project: &session.project,
+            session_id: &session.session_id,
+        });
+        for timestamp in collected {
+            events.push(FocusEvent {
+                timestamp,
+                session_id: &session.session_id,
+            });
+        }
+    }
+
+    events.sort_by(|left, right| {
+        left.timestamp
+            .cmp(&right.timestamp)
+            .then_with(|| left.session_id.cmp(right.session_id))
+    });
+    intervals.sort_by(|left, right| {
+        left.start
+            .cmp(&right.start)
+            .then_with(|| left.session_id.cmp(right.session_id))
+    });
+
+    (events, intervals)
+}
+
+fn compute_focus_blocks(events: &[FocusEvent<'_>]) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let first = events.first()?;
+    let mut block_start = first.timestamp;
+    let mut block_end = first.timestamp;
+    let mut longest_window = (block_start, block_end);
+    for event in events.iter().skip(1) {
+        let gap = event.timestamp - block_end;
+        if gap < chrono::Duration::minutes(30) {
+            if event.timestamp > block_end {
+                block_end = event.timestamp;
+            }
+        } else {
+            if block_end - block_start > longest_window.1 - longest_window.0 {
+                longest_window = (block_start, block_end);
+            }
+            block_start = event.timestamp;
+            block_end = event.timestamp;
+        }
+    }
+    if block_end - block_start > longest_window.1 - longest_window.0 {
+        longest_window = (block_start, block_end);
+    }
+    Some(longest_window)
+}
+
+fn count_focus_blocks(events: &[FocusEvent<'_>]) -> usize {
+    if events.is_empty() {
+        return 0;
+    }
+    let mut blocks = 1usize;
+    let mut previous = events[0].timestamp;
+    for event in events.iter().skip(1) {
+        if event.timestamp - previous >= chrono::Duration::minutes(30) {
+            blocks += 1;
+        }
+        if event.timestamp > previous {
+            previous = event.timestamp;
+        }
+    }
+    blocks
+}
+
+fn count_context_switches(intervals: &[FocusInterval<'_>]) -> usize {
+    let mut context_switches = 0usize;
+    let mut previous: Option<&FocusInterval<'_>> = None;
+    let mut block_end: Option<DateTime<Utc>> = None;
+
+    for interval in intervals {
+        if let (Some(prev), Some(prev_end)) = (previous, block_end) {
+            let gap = interval.start - prev_end;
+            if gap < chrono::Duration::minutes(30) && interval.project != prev.project {
+                context_switches += 1;
+            }
+        }
+        block_end = Some(match block_end {
+            Some(existing) if existing > interval.end => existing,
+            _ => interval.end,
+        });
+        previous = Some(interval);
+    }
+
+    context_switches
 }
 
 fn parsed_session_range(session: &RawSession) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -784,6 +886,55 @@ mod tests {
     }
 
     #[test]
+    fn splits_focus_blocks_by_internal_gaps_within_a_single_session() {
+        // A session that spans many hours but goes idle for 30+ minutes in
+        // the middle must not report the full span as one focus block. Old
+        // session-range logic wrongly collapsed the whole range into one
+        // 15-hour block; event-based logic breaks at the internal gap.
+        let session = RawSession {
+            session_id: "long".to_string(),
+            project: "nippo".to_string(),
+            project_path: "/tmp/nippo".to_string(),
+            git_branch: Some("main".to_string()),
+            user_entries: vec![
+                ParsedUserEntry {
+                    timestamp: "2026-08-24T03:33:00Z".to_string(),
+                    text: "early morning".to_string(),
+                },
+                ParsedUserEntry {
+                    timestamp: "2026-08-24T19:00:00Z".to_string(),
+                    text: "evening".to_string(),
+                },
+            ],
+            assistant_entries: vec![
+                ParsedAssistantEntry {
+                    timestamp: "2026-08-24T03:45:00Z".to_string(),
+                    message_count: 1,
+                    tool_uses: Vec::new(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    file_paths: Vec::new(),
+                },
+                ParsedAssistantEntry {
+                    timestamp: "2026-08-24T19:01:00Z".to_string(),
+                    message_count: 1,
+                    tool_uses: Vec::new(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    file_paths: Vec::new(),
+                },
+            ],
+        };
+
+        let focus = compute_focus(&[session]).stats;
+
+        assert_eq!(focus.focus_blocks, 2);
+        // Longest block is the morning stretch 03:33 → 03:45 = 12 minutes.
+        // Not 927 minutes.
+        assert_eq!(focus.longest_focus_minutes, 12);
+    }
+
+    #[test]
     fn excludes_sessions_with_unparseable_timestamps() {
         let sessions = vec![
             timed_session(
@@ -936,7 +1087,7 @@ mod tests {
     #[test]
     fn builds_deterministic_render_helpers() {
         let sessions = vec![
-            timed_session("alpha", "a", "2026-05-05T03:17:00Z", "2026-05-05T03:55:00Z"),
+            timed_session("alpha", "a", "2026-05-05T03:17:00Z", "2026-05-05T03:45:00Z"),
             timed_session("alpha", "b", "2026-05-05T04:00:00Z", "2026-05-05T04:17:00Z"),
         ];
         let mut sessions = sessions;
