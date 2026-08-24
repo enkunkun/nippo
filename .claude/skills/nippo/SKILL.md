@@ -62,7 +62,9 @@ context: fork
 
 `daily` は `(空)` と同じ日報モードのエイリアス。出力ファイル名は `reports/nippo-YYYY-MM-DD.md` を使う。
 
-残りトークンのうち `claude` / `codex` / `all` は `--source` に渡す。数値があれば `--days` を置換。それ以外の文字列は `--project` に渡す。先頭単語がモード名・数値・source のいずれでもない場合は日報モードとして扱い、その単語を `--project` に渡す。
+残りトークンのうち `claude` / `codex` / `opencode` / `all` は `--source` に渡す。`today` / `yesterday` / `this-week` / `last-week` / `week-before-last` / `this-month` / `last-month` / `month-before-last` は `--period` に渡し、その場合は `--days` を付けない（`--period` が優先されるため）。数値があれば `--days` を置換。それ以外の文字列は `--project` に渡す。先頭単語がモード名・数値・source・period のいずれでもない場合は日報モードとして扱い、その単語を `--project` に渡す。
+
+`--period` を指定して `daily` を実行する場合、出力ファイル名の日付はその期間の代表日（`today` は当日、`yesterday` は前日、`last-week` などは範囲の終端日）を使う。
 
 ## 収集と生成
 
