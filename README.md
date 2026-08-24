@@ -204,6 +204,7 @@ skill を介さず、collector の結果を直接確認することもできま�
 nippo collect --period today
 nippo collect --days 7 --format summary
 nippo collect --source codex --period today
+nippo collect --source opencode --period today
 nippo collect --source all --days 7
 nippo collect --period last-week
 nippo collect --from 2026-08-01 --to 2026-08-31
