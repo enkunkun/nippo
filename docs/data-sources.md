@@ -1,6 +1,6 @@
 # データソース仕様
 
-Claude Code / Codex のセッションデータの保存場所と形式。
+Claude Code / Codex / opencode のセッションデータの保存場所と形式。
 
 ## 保存場所
 
@@ -121,6 +121,48 @@ SELECT id, cwd, git_branch, rollout_path FROM threads;
 - `git_branch`: ブランチ名
 - `rollout_path`: assistant 側の rollout JSONL へのパス
 
+## opencode の保存場所
+
+```
+~/.local/share/opencode/opencode.db
+~/.local/share/opencode/opencode-dev.db
+```
+
+- `opencode.db`: prod ビルドのメイン SQLite。セッション本体・メッセージ・パート・プロジェクトを保持
+- `opencode-dev.db`: dev ビルドの SQLite。存在すれば同じスキーマとして併読する
+- session_diff/ など `storage/` 配下の JSON は差分キャッシュで、`nippo` では読まない
+
+## opencode のスキーマ（使用列）
+
+```sql
+-- 各セッションのメタデータ
+SELECT id, project_id, directory, time_created, time_updated FROM session;
+
+-- session に対応するプロジェクト（`global` はホーム作業）
+SELECT id, worktree FROM project;
+
+-- 会話ログ。data は JSON 文字列
+SELECT id, session_id, time_created, data FROM message
+ORDER BY session_id, time_created, id;
+
+-- message に紐づくパート（テキスト・tool 呼び出し・reasoning など）
+SELECT id, message_id, session_id, time_created, data FROM part
+ORDER BY session_id, time_created, id;
+```
+
+- `session.directory`: 実行時の cwd。project.worktree より優先し、空か `/` なら worktree にフォールバック
+- `time_created` / `time_updated`: Unix ミリ秒（他ソースと違うので秒換算に注意）
+- `message.data`: `{"role":"user"|"assistant","tokens":{"input","output"},"time":{...}}` の JSON
+- `part.data`: `type` によって形が変わる
+  - `text` → `{"type":"text","text":"..."}`（user / assistant 双方の本文）
+  - `tool` → `{"type":"tool","tool":"read","state":{"input":{"filePath":"..."}}}`（tool_uses と file_paths を抽出）
+  - `step-start` / `step-finish` / `reasoning` → 集計しない
+
+`nippo` は message を先に読んで `user` / `assistant` のロールを確定し、その message_id に
+属する part を走査して text と tool を紐づける。tool 名は `data.tool`、ファイルパスは
+`read` / `edit` / `write` の `input.filePath` のみを対象にする（bash などの
+コマンドラインからのパス推定は行わない）。
+
 ## コレクター CLI オプション
 
 ```bash
@@ -139,9 +181,10 @@ nippo collect [OPTIONS]
 | `--include-self` | コマンドを実行している Claude Code / Codex セッションも含める | `false` |
 | `--max-sessions N` | 出力するセッション数の上限（0 = 無制限） | `0` |
 | `--format json\|summary` | 出力形式 | `json` |
-| `--source auto\|claude\|codex\|all` | データソース選択 | `auto` |
+| `--source auto\|claude\|codex\|opencode\|all` | データソース選択 | `auto` |
 | `--claude-dir PATH` | Claude データディレクトリ | `~/.claude` |
 | `--codex-dir PATH` | Codex データディレクトリ | `~/.codex` |
+| `--opencode-dir PATH` | opencode データディレクトリ | `~/.local/share/opencode` |
 
 `--period` の値: `today`, `yesterday`, `this-week`, `last-week`, `week-before-last`, `this-month`, `last-month`, `month-before-last`
 
@@ -178,4 +221,5 @@ JSON の `render_helpers` はローカル時刻のセッション範囲、30 分
 - `CODEX_THREAD_ID` があるときは `codex`
 - それ以外は Claude Code のデータがあれば `claude`
 - Claude がなく Codex があれば `codex`
-- 明示的に両方混ぜたいときだけ `--source all`
+- Claude も Codex もなく opencode のデータがあれば `opencode`
+- 明示的に混ぜたいときだけ `--source all`（利用可能な全ソースをマージ）

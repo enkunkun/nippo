@@ -251,7 +251,8 @@ nippo collect --period today                     # 今日の JSON 出力
 nippo collect --days 1                           # 今日の JSON 出力（ローカル日付基準）
 nippo collect --days 7 --format summary          # テキストサマリー
 nippo collect --source codex --period today      # Codex 履歴のみ
-nippo collect --source all --days 7              # Claude Code + Codex
+nippo collect --source opencode --period today   # opencode 履歴のみ
+nippo collect --source all --days 7              # Claude Code + Codex + opencode
 nippo collect --period last-week                 # 先週
 nippo collect --from 2026-03-01 --to 2026-03-15  # 日付範囲
 nippo collect --project ccswarm                  # プロジェクトフィルタ

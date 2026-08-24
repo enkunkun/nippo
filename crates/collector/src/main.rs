@@ -25,6 +25,10 @@ use crate::sources::codex::{
     collect_sessions as collect_codex_sessions,
     discover_history_files as discover_codex_history_files,
 };
+use crate::sources::opencode::{
+    collect_sessions as collect_opencode_sessions,
+    discover_history_files as discover_opencode_history_files,
+};
 
 #[derive(Clone, ValueEnum)]
 enum OutputFormat {
@@ -42,7 +46,9 @@ enum DataSource {
     Claude,
     /// Read Codex history and thread metadata
     Codex,
-    /// Merge Claude Code and Codex history
+    /// Read opencode SQLite history (~/.local/share/opencode)
+    Opencode,
+    /// Merge Claude Code, Codex, and opencode history
     All,
 }
 
@@ -155,6 +161,10 @@ enum Commands {
         /// Custom Codex data directory (default: ~/.codex)
         #[arg(long)]
         codex_dir: Option<PathBuf>,
+
+        /// Custom opencode data directory (default: ~/.local/share/opencode)
+        #[arg(long)]
+        opencode_dir: Option<PathBuf>,
     },
 
     /// Fold structured `## Unclear points` from past reports into a
@@ -216,10 +226,13 @@ fn run() -> Result<()> {
             source,
             claude_dir,
             codex_dir,
+            opencode_dir,
         } => {
             let home_dir = dirs_home();
             let claude_dir = claude_dir.unwrap_or_else(|| home_dir.join(".claude"));
             let codex_dir = codex_dir.unwrap_or_else(|| home_dir.join(".codex"));
+            let opencode_dir =
+                opencode_dir.unwrap_or_else(|| home_dir.join(".local/share/opencode"));
 
             // Priority: --period > --from/--to > --days
             let filter = if let Some(ref period) = period {
@@ -230,9 +243,14 @@ fn run() -> Result<()> {
                 DateFilter::from_days(days)
             };
 
-            let selected_sources = resolve_sources(&source, &claude_dir, &codex_dir);
-            let (mut sessions, total_files) =
-                collect_from_sources(&selected_sources, &claude_dir, &codex_dir, &filter)?;
+            let selected_sources = resolve_sources(&source, &claude_dir, &codex_dir, &opencode_dir);
+            let (mut sessions, total_files) = collect_from_sources(
+                &selected_sources,
+                &claude_dir,
+                &codex_dir,
+                &opencode_dir,
+                &filter,
+            )?;
 
             if !include_self {
                 retain_non_current_sessions(&mut sessions, &current_host_session_ids());
@@ -399,11 +417,13 @@ fn resolve_sources(
     source: &DataSource,
     claude_dir: &std::path::Path,
     codex_dir: &std::path::Path,
+    opencode_dir: &std::path::Path,
 ) -> Vec<DataSource> {
     match source {
-        DataSource::Auto => vec![detect_auto_source(claude_dir, codex_dir)],
+        DataSource::Auto => vec![detect_auto_source(claude_dir, codex_dir, opencode_dir)],
         DataSource::Claude => vec![DataSource::Claude],
         DataSource::Codex => vec![DataSource::Codex],
+        DataSource::Opencode => vec![DataSource::Opencode],
         DataSource::All => {
             let mut sources = Vec::new();
             if claude_available(claude_dir) {
@@ -412,15 +432,22 @@ fn resolve_sources(
             if codex_available(codex_dir) {
                 sources.push(DataSource::Codex);
             }
+            if opencode_available(opencode_dir) {
+                sources.push(DataSource::Opencode);
+            }
             if sources.is_empty() {
-                sources.push(detect_auto_source(claude_dir, codex_dir));
+                sources.push(detect_auto_source(claude_dir, codex_dir, opencode_dir));
             }
             sources
         }
     }
 }
 
-fn detect_auto_source(claude_dir: &std::path::Path, codex_dir: &std::path::Path) -> DataSource {
+fn detect_auto_source(
+    claude_dir: &std::path::Path,
+    codex_dir: &std::path::Path,
+    opencode_dir: &std::path::Path,
+) -> DataSource {
     if std::env::var_os("CODEX_THREAD_ID").is_some() && codex_available(codex_dir) {
         return DataSource::Codex;
     }
@@ -430,6 +457,9 @@ fn detect_auto_source(claude_dir: &std::path::Path, codex_dir: &std::path::Path)
     if codex_available(codex_dir) {
         return DataSource::Codex;
     }
+    if opencode_available(opencode_dir) {
+        return DataSource::Opencode;
+    }
     DataSource::Claude
 }
 
@@ -437,6 +467,7 @@ fn collect_from_sources(
     sources: &[DataSource],
     claude_dir: &std::path::Path,
     codex_dir: &std::path::Path,
+    opencode_dir: &std::path::Path,
     filter: &DateFilter,
 ) -> Result<(Vec<RawSession>, usize)> {
     let mut sessions = Vec::new();
@@ -451,6 +482,10 @@ fn collect_from_sources(
             DataSource::Codex => {
                 total_files += discover_codex_history_files(codex_dir)?.len();
                 sessions.extend(collect_codex_sessions(codex_dir, filter)?);
+            }
+            DataSource::Opencode => {
+                total_files += discover_opencode_history_files(opencode_dir)?.len();
+                sessions.extend(collect_opencode_sessions(opencode_dir, filter)?);
             }
             DataSource::Auto | DataSource::All => unreachable!("source must be resolved first"),
         }
@@ -483,6 +518,10 @@ fn codex_available(codex_dir: &std::path::Path) -> bool {
     codex_dir.join("history.jsonl").exists()
 }
 
+fn opencode_available(opencode_dir: &std::path::Path) -> bool {
+    opencode_dir.join("opencode.db").exists() || opencode_dir.join("opencode-dev.db").exists()
+}
+
 fn period_label(period: &Period) -> String {
     match period {
         Period::Today => "today".to_string(),
@@ -501,6 +540,7 @@ fn source_name(source: &DataSource) -> &'static str {
         DataSource::Auto => "auto",
         DataSource::Claude => "claude",
         DataSource::Codex => "codex",
+        DataSource::Opencode => "opencode",
         DataSource::All => "all",
     }
 }
