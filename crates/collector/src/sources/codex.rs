@@ -161,65 +161,62 @@ fn collect_rollout_entries(rollout_path: &Path, filter: &DateFilter) -> Vec<Pars
             continue;
         }
 
-        match value.get("type").and_then(Value::as_str) {
-            Some("response_item") => {
-                if let Some(payload) = value.get("payload") {
-                    entries.extend(extract_response_item_entries(timestamp, payload));
-                }
-            }
-            Some("event_msg") => {
-                if let Some(payload) = value.get("payload") {
-                    entries.extend(extract_event_entries(timestamp, payload));
-                }
-            }
-            _ => {}
+        let Some(item_type) = value.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        if !matches!(item_type, "response_item" | "event_msg") {
+            continue;
+        }
+        if let Some(entry) = value
+            .get("payload")
+            .and_then(|payload| extract_rollout_entry(timestamp, item_type, payload))
+        {
+            entries.push(entry);
         }
     }
 
     entries
 }
 
-fn extract_response_item_entries(timestamp: &str, payload: &Value) -> Vec<ParsedAssistantEntry> {
-    match payload.get("type").and_then(Value::as_str) {
-        Some("message") if payload.get("role").and_then(Value::as_str) == Some("assistant") => {
-            vec![ParsedAssistantEntry {
-                timestamp: timestamp.to_string(),
-                message_count: 1,
-                tool_uses: Vec::new(),
-                input_tokens: 0,
-                output_tokens: 0,
-                file_paths: Vec::new(),
-            }]
-        }
-        Some("function_call") | Some("custom_tool_call") => payload
-            .get("name")
-            .and_then(Value::as_str)
-            .map(|name| {
-                vec![ParsedAssistantEntry {
-                    timestamp: timestamp.to_string(),
-                    message_count: 0,
-                    tool_uses: vec![name.to_string()],
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    file_paths: Vec::new(),
-                }]
-            })
-            .unwrap_or_default(),
-        Some("web_search_call") => vec![ParsedAssistantEntry {
-            timestamp: timestamp.to_string(),
-            message_count: 0,
-            tool_uses: vec!["web_search".to_string()],
-            input_tokens: 0,
-            output_tokens: 0,
-            file_paths: Vec::new(),
-        }],
-        _ => Vec::new(),
+fn empty_assistant_entry(timestamp: &str) -> ParsedAssistantEntry {
+    ParsedAssistantEntry {
+        timestamp: timestamp.to_string(),
+        message_count: 0,
+        tool_uses: Vec::new(),
+        input_tokens: 0,
+        output_tokens: 0,
+        file_paths: Vec::new(),
     }
 }
 
-fn extract_event_entries(timestamp: &str, payload: &Value) -> Vec<ParsedAssistantEntry> {
-    match payload.get("type").and_then(Value::as_str) {
-        Some("token_count") => payload
+fn extract_rollout_entry(
+    timestamp: &str,
+    item_type: &str,
+    payload: &Value,
+) -> Option<ParsedAssistantEntry> {
+    match (item_type, payload.get("type").and_then(Value::as_str)) {
+        // response_item payloads
+        ("response_item", Some("message"))
+            if payload.get("role").and_then(Value::as_str) == Some("assistant") =>
+        {
+            Some(ParsedAssistantEntry {
+                message_count: 1,
+                ..empty_assistant_entry(timestamp)
+            })
+        }
+        ("response_item", Some("function_call" | "custom_tool_call")) => payload
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| ParsedAssistantEntry {
+                tool_uses: vec![name.to_string()],
+                ..empty_assistant_entry(timestamp)
+            }),
+        ("response_item", Some("web_search_call")) => Some(ParsedAssistantEntry {
+            tool_uses: vec!["web_search".to_string()],
+            ..empty_assistant_entry(timestamp)
+        }),
+        // event_msg payloads
+        ("event_msg", Some("token_count")) => payload
             .get("info")
             .and_then(|value| value.get("last_token_usage"))
             .and_then(Value::as_object)
@@ -232,40 +229,24 @@ fn extract_event_entries(timestamp: &str, payload: &Value) -> Vec<ParsedAssistan
                     .get("output_tokens")
                     .and_then(Value::as_u64)
                     .unwrap_or(0);
-                if input_tokens == 0 && output_tokens == 0 {
-                    None
-                } else {
-                    Some(vec![ParsedAssistantEntry {
-                        timestamp: timestamp.to_string(),
-                        message_count: 0,
-                        tool_uses: Vec::new(),
-                        input_tokens,
-                        output_tokens,
-                        file_paths: Vec::new(),
-                    }])
-                }
-            })
-            .unwrap_or_default(),
-        Some("exec_command_end") => {
+                (input_tokens != 0 || output_tokens != 0).then(|| ParsedAssistantEntry {
+                    input_tokens,
+                    output_tokens,
+                    ..empty_assistant_entry(timestamp)
+                })
+            }),
+        ("event_msg", Some("exec_command_end")) => {
             let file_paths = payload
                 .get("parsed_cmd")
                 .and_then(Value::as_array)
                 .map(|commands| extract_paths_from_commands(commands))
                 .unwrap_or_default();
-            if file_paths.is_empty() {
-                Vec::new()
-            } else {
-                vec![ParsedAssistantEntry {
-                    timestamp: timestamp.to_string(),
-                    message_count: 0,
-                    tool_uses: Vec::new(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    file_paths,
-                }]
-            }
+            (!file_paths.is_empty()).then(|| ParsedAssistantEntry {
+                file_paths,
+                ..empty_assistant_entry(timestamp)
+            })
         }
-        Some("patch_apply_end") => {
+        ("event_msg", Some("patch_apply_end")) => {
             let file_paths = payload
                 .get("changes")
                 .and_then(Value::as_object)
@@ -276,20 +257,12 @@ fn extract_event_entries(timestamp: &str, payload: &Value) -> Vec<ParsedAssistan
                     paths
                 })
                 .unwrap_or_default();
-            if file_paths.is_empty() {
-                Vec::new()
-            } else {
-                vec![ParsedAssistantEntry {
-                    timestamp: timestamp.to_string(),
-                    message_count: 0,
-                    tool_uses: Vec::new(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    file_paths,
-                }]
-            }
+            (!file_paths.is_empty()).then(|| ParsedAssistantEntry {
+                file_paths,
+                ..empty_assistant_entry(timestamp)
+            })
         }
-        _ => Vec::new(),
+        _ => None,
     }
 }
 

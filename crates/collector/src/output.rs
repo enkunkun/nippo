@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::session::{
-    RawSession, assistant_message_count, is_meaningful_prompt, sort_sessions_by_recency,
-    summarize_session,
+    DateRange, RawSession, SessionSummary, assistant_message_count, is_meaningful_prompt,
+    sort_sessions_by_recency, summarize_session,
 };
 
 /// UTC タイムスタンプからローカル時間の時（HH）を抽出する
@@ -51,39 +51,6 @@ pub struct OutputPeriod {
 pub struct SourceMeta {
     pub requested: String,
     pub resolved: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct SessionSummary {
-    pub session_id: String,
-    pub project: String,
-    pub project_path: String,
-    pub git_branch: Option<String>,
-    pub time_range: DateRange,
-    pub user_prompts: Vec<PromptSummary>,
-    pub tool_usage: HashMap<String, u32>,
-    pub message_counts: MessageCounts,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    pub files_touched: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct DateRange {
-    pub start: Option<String>,
-    pub end: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct PromptSummary {
-    pub text: String,
-    pub timestamp: String,
-}
-
-#[derive(Serialize)]
-pub struct MessageCounts {
-    pub user: usize,
-    pub assistant: usize,
 }
 
 #[derive(Serialize)]

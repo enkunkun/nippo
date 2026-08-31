@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "nippo"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "chrono",
