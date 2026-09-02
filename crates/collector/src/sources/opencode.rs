@@ -138,17 +138,23 @@ fn collect_from_db(db_path: &Path, filter: &DateFilter) -> Result<Vec<RawSession
                         MessageIndexEntry {
                             session_id,
                             role: MessageRole::Assistant { entry_index },
-                            timestamp,
                         },
                     );
                 }
                 "user" => {
+                    let session = sessions
+                        .get_mut(&session_id)
+                        .expect("session was validated above");
+                    let entry_index = session.user_entries.len();
+                    session.user_entries.push(ParsedUserEntry {
+                        timestamp,
+                        text: String::new(),
+                    });
                     message_index.insert(
                         message_id,
                         MessageIndexEntry {
                             session_id,
-                            role: MessageRole::User,
-                            timestamp,
+                            role: MessageRole::User { entry_index },
                         },
                     );
                 }
@@ -190,14 +196,27 @@ fn collect_from_db(db_path: &Path, filter: &DateFilter) -> Result<Vec<RawSession
             let part_type = data.get("type").and_then(Value::as_str).unwrap_or("");
 
             match (&index_entry.role, part_type) {
-                (MessageRole::User, "text") => {
+                (MessageRole::User { entry_index }, "text") => {
+                    let is_synthetic = data
+                        .get("synthetic")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let is_ignored = data
+                        .get("ignored")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if is_synthetic || is_ignored {
+                        continue;
+                    }
                     if let Some(text) = data.get("text").and_then(Value::as_str) {
                         let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            session.user_entries.push(ParsedUserEntry {
-                                timestamp: index_entry.timestamp.clone(),
-                                text: truncate(trimmed, MAX_PROMPT_LEN),
-                            });
+                        if !trimmed.is_empty()
+                            && let Some(entry) = session.user_entries.get_mut(*entry_index)
+                        {
+                            if !entry.text.is_empty() {
+                                entry.text.push('\n');
+                            }
+                            entry.text.push_str(trimmed);
                         }
                     }
                 }
@@ -223,6 +242,12 @@ fn collect_from_db(db_path: &Path, filter: &DateFilter) -> Result<Vec<RawSession
 
     let mut sessions: Vec<RawSession> = sessions.into_values().collect();
     for session in &mut sessions {
+        session
+            .user_entries
+            .retain(|entry| !entry.text.trim().is_empty());
+        for entry in &mut session.user_entries {
+            entry.text = truncate(entry.text.trim(), MAX_PROMPT_LEN);
+        }
         session
             .user_entries
             .sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
@@ -260,11 +285,10 @@ struct SessionMeta {
 struct MessageIndexEntry {
     session_id: String,
     role: MessageRole,
-    timestamp: String,
 }
 
 enum MessageRole {
-    User,
+    User { entry_index: usize },
     Assistant { entry_index: usize },
 }
 
@@ -799,6 +823,74 @@ mod tests {
         let session = &sessions[0];
         assert_eq!(session.user_entries.len(), 1);
         assert_eq!(session.user_entries[0].text, "real user");
+    }
+
+    #[test]
+    fn skips_synthetic_and_ignored_user_text_parts() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("opencode.db");
+        write_db(&db_path);
+        let conn = Connection::open(&db_path).expect("open");
+
+        for (message_id, part_id, timestamp, flag) in [
+            (
+                "msg-synthetic",
+                "part-synthetic",
+                1_776_144_300_000_i64,
+                r#""synthetic":true"#,
+            ),
+            (
+                "msg-ignored",
+                "part-ignored",
+                1_776_144_400_000_i64,
+                r#""ignored":true"#,
+            ),
+        ] {
+            conn.execute(
+                "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+                (message_id, "ses-1", timestamp, r#"{"role":"user"}"#),
+            )
+            .expect("insert user message");
+            let data = format!(r#"{{"type":"text","text":"internal context",{flag}}}"#);
+            conn.execute(
+                "INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+                (part_id, message_id, "ses-1", timestamp, data),
+            )
+            .expect("insert user text part");
+        }
+
+        let filter = DateFilter::from_days(0);
+        let sessions = collect_sessions(dir.path(), &filter).expect("collect");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].user_entries.len(), 1);
+        assert_eq!(sessions[0].user_entries[0].text, "最初の指示");
+    }
+
+    #[test]
+    fn joins_user_text_parts_into_one_message() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("opencode.db");
+        write_db(&db_path);
+        let conn = Connection::open(&db_path).expect("open");
+        conn.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                "part-u2",
+                "msg-u",
+                "ses-1",
+                1_776_144_000_001_i64,
+                r#"{"type":"text","text":"次の指示"}"#,
+            ),
+        )
+        .expect("insert second user text part");
+
+        let filter = DateFilter::from_days(0);
+        let sessions = collect_sessions(dir.path(), &filter).expect("collect");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].user_entries.len(), 1);
+        assert_eq!(sessions[0].user_entries[0].text, "最初の指示\n次の指示");
     }
 
     #[test]

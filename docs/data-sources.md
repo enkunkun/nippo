@@ -158,6 +158,9 @@ ORDER BY session_id, time_created, id;
   - `tool` → `{"type":"tool","tool":"read","state":{"input":{"filePath":"..."}}}`（tool_uses と file_paths を抽出）
   - `step-start` / `step-finish` / `reasoning` → 集計しない
 
+user message に複数の text part がある場合は改行で連結して 1 件として数える。
+`synthetic: true` または `ignored: true` の text part は利用者自身の指示ではないため除外する。
+
 `nippo` は message を先に読んで `user` / `assistant` のロールを確定し、その message_id に
 属する part を走査して text と tool を紐づける。tool 名は `data.tool`、ファイルパスは
 `read` / `edit` / `write` の `input.filePath` のみを対象にする（bash などの
