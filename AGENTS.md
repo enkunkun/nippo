@@ -28,6 +28,8 @@ cargo test -p nippo
 - `crates/collector/src/session.rs`: source 共通のセッション表現
 - `crates/collector/src/sources/claude_code.rs`: Claude Code パーサ
 - `crates/collector/src/sources/codex.rs`: Codex 履歴パーサ
+- `crates/collector/src/sources/opencode.rs`: opencode 履歴パーサ
+- `crates/collector/src/sources/agy.rs`: agy (Antigravity CLI) 履歴パーサ
 - `.claude/skills/nippo/SKILL.md`: Claude Code 用 skill
 - `.agents/skills/nippo/SKILL.md`: Codex 用 skill
 
