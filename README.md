@@ -1,6 +1,6 @@
 # nippo
 
-Claude Code / Codex / opencode / agy の作業履歴から、日報・振り返り・進捗報告を生成するツールです。
+Claude Code / Codex / opencode / agy / Command Code の作業履歴から、日報・振り返り・進捗報告を生成するツールです。
 
 Rust 製の collector が各ツールのローカルなセッション履歴を収集し、Claude Code / Codex の
 `nippo` skill が用途に合ったレポートへまとめます。日々の作業を別の場所へ書き写す必要はありません。
@@ -211,6 +211,7 @@ nippo collect --days 7 --format summary
 nippo collect --source codex --period today
 nippo collect --source opencode --period today
 nippo collect --source agy --period today
+nippo collect --source command-code --period today
 nippo collect --source all --days 7
 nippo collect --period last-week
 nippo collect --from 2026-08-01 --to 2026-08-31
@@ -235,7 +236,7 @@ nippo collect --days 0                # 全期間
 ## 仕組み
 
 ```text
-Claude Code / Codex / opencode / agy のローカル履歴
+Claude Code / Codex / opencode / agy / Command Code のローカル履歴
                       |
                       v
               nippo collect (Rust)
@@ -259,6 +260,7 @@ collector はデータ収集と決定的な集計だけを担当します。文�
 - Codex: `~/.codex/history.jsonl`、`state_5.sqlite`、thread が参照する rollout JSONL
 - opencode: `~/.local/share/opencode/opencode.db`、`opencode-dev.db`
 - agy: `~/.gemini/antigravity-cli/conversation_summaries.db`、`brain/{conversation_id}/.system_generated/logs/transcript.jsonl`
+- command-code: `~/.commandcode/projects/**/*.jsonl`
 - `logs_2.sqlite` は診断用で、日報の主データソースには使いません
 
 Codex は `history.jsonl` に記録がないセッションも、SQLite に登録された rollout に

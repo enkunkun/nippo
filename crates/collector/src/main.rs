@@ -29,6 +29,10 @@ use crate::sources::codex::{
     collect_sessions as collect_codex_sessions,
     discover_history_files as discover_codex_history_files,
 };
+use crate::sources::command_code::{
+    collect_sessions as collect_command_code_sessions,
+    discover_session_files as discover_command_code_session_files,
+};
 use crate::sources::opencode::{
     collect_sessions as collect_opencode_sessions,
     discover_history_files as discover_opencode_history_files,
@@ -55,7 +59,10 @@ enum DataSource {
     /// Read agy (Antigravity CLI) history (~/.gemini/antigravity-cli)
     #[value(alias = "antigravity")]
     Agy,
-    /// Merge Claude Code, Codex, opencode, and agy history
+    /// Read Command Code session logs (~/.commandcode)
+    #[value(alias = "commandcode", alias = "cmd-code")]
+    CommandCode,
+    /// Merge Claude Code, Codex, opencode, agy, and Command Code history
     All,
 }
 
@@ -176,6 +183,14 @@ enum Commands {
         /// Custom agy data directory (default: ~/.gemini/antigravity-cli)
         #[arg(long, visible_alias = "antigravity-dir")]
         agy_dir: Option<PathBuf>,
+
+        /// Custom Command Code data directory (default: ~/.commandcode)
+        #[arg(
+            long,
+            visible_alias = "commandcode-dir",
+            visible_alias = "cmd-code-dir"
+        )]
+        command_code_dir: Option<PathBuf>,
     },
 
     /// Fold structured `## Unclear points` from past reports into a
@@ -239,6 +254,7 @@ fn run() -> Result<()> {
             codex_dir,
             opencode_dir,
             agy_dir,
+            command_code_dir,
         } => {
             let home_dir = dirs_home();
             let claude_dir = claude_dir.unwrap_or_else(|| home_dir.join(".claude"));
@@ -246,6 +262,8 @@ fn run() -> Result<()> {
             let opencode_dir =
                 opencode_dir.unwrap_or_else(|| home_dir.join(".local/share/opencode"));
             let agy_dir = agy_dir.unwrap_or_else(|| home_dir.join(".gemini/antigravity-cli"));
+            let command_code_dir =
+                command_code_dir.unwrap_or_else(|| home_dir.join(".commandcode"));
 
             // Priority: --period > --from/--to > --days
             let filter = if let Some(ref period) = period {
@@ -256,14 +274,21 @@ fn run() -> Result<()> {
                 DateFilter::from_days(days)
             };
 
-            let selected_sources =
-                resolve_sources(&source, &claude_dir, &codex_dir, &opencode_dir, &agy_dir);
+            let selected_sources = resolve_sources(
+                &source,
+                &claude_dir,
+                &codex_dir,
+                &opencode_dir,
+                &agy_dir,
+                &command_code_dir,
+            );
             let (mut sessions, total_files) = collect_from_sources(
                 &selected_sources,
                 &claude_dir,
                 &codex_dir,
                 &opencode_dir,
                 &agy_dir,
+                &command_code_dir,
                 &filter,
             )?;
 
@@ -434,6 +459,7 @@ fn resolve_sources(
     codex_dir: &std::path::Path,
     opencode_dir: &std::path::Path,
     agy_dir: &std::path::Path,
+    command_code_dir: &std::path::Path,
 ) -> Vec<DataSource> {
     match source {
         DataSource::Auto => vec![detect_auto_source(
@@ -441,11 +467,13 @@ fn resolve_sources(
             codex_dir,
             opencode_dir,
             agy_dir,
+            command_code_dir,
         )],
         DataSource::Claude => vec![DataSource::Claude],
         DataSource::Codex => vec![DataSource::Codex],
         DataSource::Opencode => vec![DataSource::Opencode],
         DataSource::Agy => vec![DataSource::Agy],
+        DataSource::CommandCode => vec![DataSource::CommandCode],
         DataSource::All => {
             let mut sources = Vec::new();
             if claude_available(claude_dir) {
@@ -460,12 +488,16 @@ fn resolve_sources(
             if agy_available(agy_dir) {
                 sources.push(DataSource::Agy);
             }
+            if command_code_available(command_code_dir) {
+                sources.push(DataSource::CommandCode);
+            }
             if sources.is_empty() {
                 sources.push(detect_auto_source(
                     claude_dir,
                     codex_dir,
                     opencode_dir,
                     agy_dir,
+                    command_code_dir,
                 ));
             }
             sources
@@ -478,7 +510,13 @@ fn detect_auto_source(
     codex_dir: &std::path::Path,
     opencode_dir: &std::path::Path,
     agy_dir: &std::path::Path,
+    command_code_dir: &std::path::Path,
 ) -> DataSource {
+    if std::env::var_os("COMMANDCODE_SESSION_ID").is_some()
+        && command_code_available(command_code_dir)
+    {
+        return DataSource::CommandCode;
+    }
     if std::env::var_os("ANTIGRAVITY_CONVERSATION_ID").is_some() && agy_available(agy_dir) {
         return DataSource::Agy;
     }
@@ -497,6 +535,9 @@ fn detect_auto_source(
     if agy_available(agy_dir) {
         return DataSource::Agy;
     }
+    if command_code_available(command_code_dir) {
+        return DataSource::CommandCode;
+    }
     DataSource::Claude
 }
 
@@ -506,6 +547,7 @@ fn collect_from_sources(
     codex_dir: &std::path::Path,
     opencode_dir: &std::path::Path,
     agy_dir: &std::path::Path,
+    command_code_dir: &std::path::Path,
     filter: &DateFilter,
 ) -> Result<(Vec<RawSession>, usize)> {
     let mut sessions = Vec::new();
@@ -529,6 +571,10 @@ fn collect_from_sources(
                 total_files += discover_agy_history_files(agy_dir)?.len();
                 sessions.extend(collect_agy_sessions(agy_dir, filter)?);
             }
+            DataSource::CommandCode => {
+                total_files += discover_command_code_session_files(command_code_dir)?.len();
+                sessions.extend(collect_command_code_sessions(command_code_dir, filter)?);
+            }
             DataSource::Auto | DataSource::All => unreachable!("source must be resolved first"),
         }
     }
@@ -549,6 +595,7 @@ fn current_host_session_ids() -> Vec<String> {
         "CLAUDE_CODE_SESSION_ID",
         "CODEX_THREAD_ID",
         "ANTIGRAVITY_CONVERSATION_ID",
+        "COMMANDCODE_SESSION_ID",
     ]
     .into_iter()
     .filter_map(|name| std::env::var(name).ok())
@@ -572,6 +619,10 @@ fn agy_available(agy_dir: &std::path::Path) -> bool {
     agy_dir.join("conversation_summaries.db").exists()
 }
 
+fn command_code_available(command_code_dir: &std::path::Path) -> bool {
+    command_code_dir.join("projects").exists()
+}
+
 fn period_label(period: &Period) -> String {
     match period {
         Period::Today => "today".to_string(),
@@ -592,6 +643,7 @@ fn source_name(source: &DataSource) -> &'static str {
         DataSource::Codex => "codex",
         DataSource::Opencode => "opencode",
         DataSource::Agy => "agy",
+        DataSource::CommandCode => "command-code",
         DataSource::All => "all",
     }
 }
@@ -643,12 +695,14 @@ mod tests {
             raw_session("claude-current"),
             raw_session("codex-current"),
             raw_session("agy-current"),
+            raw_session("command-code-current"),
             raw_session("past-work"),
         ];
         let current_ids = [
             "claude-current".to_string(),
             "codex-current".to_string(),
             "agy-current".to_string(),
+            "command-code-current".to_string(),
         ];
 
         retain_non_current_sessions(&mut sessions, &current_ids);

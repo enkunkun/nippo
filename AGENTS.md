@@ -30,6 +30,7 @@ cargo test -p nippo
 - `crates/collector/src/sources/codex.rs`: Codex 履歴パーサ
 - `crates/collector/src/sources/opencode.rs`: opencode 履歴パーサ
 - `crates/collector/src/sources/agy.rs`: agy (Antigravity CLI) 履歴パーサ
+- `crates/collector/src/sources/command_code.rs`: Command Code 履歴パーサ
 - `.claude/skills/nippo/SKILL.md`: Claude Code 用 skill
 - `.agents/skills/nippo/SKILL.md`: Codex 用 skill
 

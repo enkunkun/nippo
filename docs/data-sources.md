@@ -1,6 +1,6 @@
 # データソース仕様
 
-Claude Code / Codex / opencode / agy のセッションデータの保存場所と形式。
+Claude Code / Codex / opencode / agy / Command Code のセッションデータの保存場所と形式。
 
 ## 保存場所
 
@@ -212,6 +212,23 @@ SELECT conversation_id, workspace_uris, last_modified_time FROM conversation_sum
 - `type: "USER_INPUT"`: ユーザープロンプト。`<USER_REQUEST>` タグが含まれる場合はその内部テキストを抽出し、メタデータタグや余分な空白を除外
 - `type: "PLANNER_RESPONSE"`: アシスタント応答。`input_tokens` / `output_tokens`、および `tool_calls` の `name` と引数（`AbsolutePath`, `TargetFile`, `filePath`, `Cwd` 等）からツール使用状況と対象ファイルパスを抽出
 
+## Command Code の保存場所
+
+```
+~/.commandcode/projects/{project-dir}/{session-id}.jsonl
+```
+
+- `{project-dir}`: プロジェクトディレクトリのパス（例: `users-user-git-myproject`）
+- `{session-id}.jsonl`: セッションログ JSONL（`*.checkpoints.jsonl` はチェックポイント用ファイルのため除外）
+
+## Command Code のセッションとメッセージ形式
+
+- 先頭行（line 0）: `type: "session"`。`id`, `cwd`, `timestamp` などのメタデータを保持
+- 2行目以降: `type: "message"`。
+  - `message.role`: `"user"` または `"assistant"`
+  - `message.content`: Claude Code 互換のコンテンツブロック（`type: "text"`, `type: "tool_use"` など）
+  - `usage`（または `message.usage`）: `inputTokens`, `outputTokens` などのトークン使用量
+
 ## コレクター CLI オプション
 
 ```bash
@@ -227,14 +244,15 @@ nippo collect [OPTIONS]
 | `--project NAME` | プロジェクト名でフィルタ（部分一致） | なし |
 | `--stats-only` | セッション詳細を省略し統計のみ出力 | `false` |
 | `--include-prompt-noise` | 定型通知・画像プレースホルダ・短い肯定応答なども含める | `false` |
-| `--include-self` | コマンドを実行している Claude Code / Codex / agy セッションも含める | `false` |
+| `--include-self` | コマンドを実行している Claude Code / Codex / agy / Command Code セッションも含める | `false` |
 | `--max-sessions N` | 出力するセッション数の上限（0 = 無制限） | `0` |
 | `--format json\|summary` | 出力形式 | `json` |
-| `--source auto\|claude\|codex\|opencode\|agy\|all` | データソース選択 | `auto` |
+| `--source auto\|claude\|codex\|opencode\|agy\|command-code\|all` | データソース選択 | `auto` |
 | `--claude-dir PATH` | Claude データディレクトリ | `~/.claude` |
 | `--codex-dir PATH` | Codex データディレクトリ | `~/.codex` |
 | `--opencode-dir PATH` | opencode データディレクトリ | `~/.local/share/opencode` |
 | `--agy-dir PATH` | agy データディレクトリ (エイリアス: `--antigravity-dir`) | `~/.gemini/antigravity-cli` |
+| `--command-code-dir PATH` | Command Code データディレクトリ (エイリアス: `--commandcode-dir`, `--cmd-code-dir`) | `~/.commandcode` |
 
 `--period` の値: `today`, `yesterday`, `this-week`, `last-week`, `week-before-last`, `this-month`, `last-month`, `month-before-last`
 
@@ -260,7 +278,7 @@ JSON の `meta.period.from` と `meta.period.to` は指定した日付範囲の�
 一致する重複を除外してから、メッセージ・ツール使用・トークンを合算する。
 `--max-sessions` は統合後のセッションを最新順に並べてから適用する。
 
-`CLAUDE_CODE_SESSION_ID`、`CODEX_THREAD_ID`、または `ANTIGRAVITY_CONVERSATION_ID` が設定されている場合、その値と
+`CLAUDE_CODE_SESSION_ID`、`CODEX_THREAD_ID`、`ANTIGRAVITY_CONVERSATION_ID`、または `COMMANDCODE_SESSION_ID` が設定されている場合、その値と
 完全一致するセッションは既定で除外する。時刻やメッセージ数を使った推測では除外しない。
 
 JSON の `render_helpers` はローカル時刻のセッション範囲、30 分未満の間隔でつながる
@@ -269,10 +287,12 @@ JSON の `render_helpers` はローカル時刻のセッション範囲、30 分
 
 `--source auto` の判定:
 
+- `COMMANDCODE_SESSION_ID` があるときは `command-code`
 - `ANTIGRAVITY_CONVERSATION_ID` があるときは `agy`
 - `CODEX_THREAD_ID` があるときは `codex`
 - それ以外は Claude Code のデータがあれば `claude`
 - Claude がなく Codex があれば `codex`
 - Claude も Codex もなく opencode のデータがあれば `opencode`
 - それらもなく agy のデータがあれば `agy`
+- それらもなく Command Code のデータがあれば `command-code`
 - 明示的に混ぜたいときだけ `--source all`（利用可能な全ソースをマージ）

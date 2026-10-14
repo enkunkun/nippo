@@ -66,10 +66,13 @@ fn collect_agy(
         .arg(agy_dir.join("absent-codex"))
         .arg("--opencode-dir")
         .arg(agy_dir.join("absent-opencode"))
+        .arg("--command-code-dir")
+        .arg(agy_dir.join("absent-command-code"))
         .args(extra_args)
         .env("TZ", "Asia/Tokyo")
         .env_remove("CODEX_THREAD_ID")
-        .env_remove("CLAUDE_CODE_SESSION_ID");
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("COMMANDCODE_SESSION_ID");
 
     if let Some(cid) = current_conv_id {
         cmd.env("ANTIGRAVITY_CONVERSATION_ID", cid);

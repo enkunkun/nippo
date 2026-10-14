@@ -1,18 +1,18 @@
 ---
 name: "nippo"
-description: "Generate Japanese daily reports, reflection prompts, guides, reviews, and trend reports from Claude Code, Codex, opencode, or agy work logs. Use when the user asks for nippo, 日報, daily, reflection, guide, report, review, insight, trend, plan, ledger, or wants to summarize recent agent work."
+description: "Generate Japanese daily reports, reflection prompts, guides, reviews, and trend reports from Claude Code, Codex, opencode, agy, or Command Code work logs. Use when the user asks for nippo, 日報, daily, reflection, guide, report, review, insight, trend, plan, ledger, or wants to summarize recent agent work."
 ---
 
 # Nippo
 
-Use this skill when the user wants to turn recent Claude Code, Codex, opencode, or agy work into a report under `reports/`.
+Use this skill when the user wants to turn recent Claude Code, Codex, opencode, agy, or Command Code work into a report under `reports/`.
 
 ## Inputs
 
 - mode: default, `daily`, `brief`, `reflection`, `guide`, `report`, `review`, `insight`, `trend`, `plan`, `ledger`
 - optional days
 - optional project filter
-- optional source override: `claude`, `codex`, `opencode`, `agy`, `all`
+- optional source override: `claude`, `codex`, `opencode`, `agy`, `command-code`, `all`
 - optional period selector: `today`, `yesterday`, `this-week`, `last-week`, `week-before-last`, `this-month`, `last-month`, `month-before-last`
 
 Examples:
@@ -21,6 +21,7 @@ Examples:
 - `$nippo daily codex`
 - `$nippo daily claude`
 - `$nippo daily agy`
+- `$nippo daily command-code`
 - `$nippo daily all`
 - `$nippo review 90 codex`
 
@@ -30,7 +31,7 @@ Examples:
 2. Otherwise prefer `nippo collect ...` when `nippo` is already installed.
 3. If neither is available, stop and tell the user to install `nippo`.
 4. Treat `daily` as an alias of the default daily report mode.
-5. Default to `--source auto`. Override when the user explicitly asks for `claude`, `codex`, `opencode`, `agy`, or `all`. The collector removes deterministic prompt noise by default; do not pass `--include-prompt-noise` during report generation.
+5. Default to `--source auto`. Override when the user explicitly asks for `claude`, `codex`, `opencode`, `agy`, `command-code`, or `all`. The collector removes deterministic prompt noise by default; do not pass `--include-prompt-noise` during report generation.
 6. For `brief`, save the summary output directly and stop.
 7. For `ledger`, do NOT call `nippo collect`. Run `nippo ledger` (or `cargo run -q -p nippo -- ledger`) which scans `reports/nippo-*.md` (daily reports) for the `## Unclear points` section, folds them into `reports/ledger.yaml`, and prints a CONVERGED / DIVERGENCE-SIGNAL / CONTINUE verdict. Relay that verdict back to the user verbatim; do not over-interpret. If the user asks for agent-config candidates, run `nippo ledger --export`: it writes recurring General Fix Rules to `reports/ledger-export.md`. Tell the user these are candidates only — a human must curate them before copying anything into CLAUDE.md / AGENTS.md.
 8. For `plan`, do NOT call `nippo collect`. Find the newest `reports/nippo-*.md` by the date in its filename and read it. Also read `reports/ledger.yaml` if present and use unresolved recurring General Fix Rules as candidate material. Read [docs/templates/plan-template.md](docs/templates/plan-template.md) and [docs/reflection-theory.md](docs/reflection-theory.md), present only 1-3 experiment candidates, leave the choice / reason / first-step fields blank for the user, save to `reports/plan-YYYY-MM-DD.md`, and report the path.

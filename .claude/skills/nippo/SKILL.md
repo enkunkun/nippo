@@ -2,7 +2,7 @@
 name: nippo
 description: >
   ユーザーが日報・振り返り・作業まとめ・週報・自己評価を求めたときに、
-  Claude Code / Codex / opencode / agy のセッションログから日報・リフレクション・インサイトを生成する。
+  Claude Code / Codex / opencode / agy / Command Code のセッションログから日報・リフレクション・インサイトを生成する。
   /nippo と /nippo daily で日報、/nippo reflection で内省の問い、/nippo guide で学習支援、
   /nippo report で進捗報告、/nippo review で自己評価、/nippo insight で深い振り返り、
   /nippo trend で長期変化分析、/nippo plan で朝の行動実験、
@@ -39,7 +39,7 @@ context: fork
 - Codex 由来のレポートは assistant/tool のメトリクスが疎になることがある。数値を捏造せず、疎であることを明示する
 - source の解決やデータ欠損について質問されたら `${CLAUDE_SKILL_DIR}/docs/data-sources.md` を Read する
 - `decisions` を一部だけ載せる場合は「全N件中M件を記載」と明記する
-- 現在の Claude Code / Codex / agy セッションはコレクターが除外するため、`meta` や `stats` から手作業でセッション数を引かない
+- 現在の Claude Code / Codex / agy / Command Code セッションはコレクターが除外するため、`meta` や `stats` から手作業でセッション数を引かない
 - 参考リンクの URL はそのまま貼らず、末尾の日本語や句読点を落として正しい URL だけを残す
 
 ## モード決定
@@ -63,7 +63,7 @@ context: fork
 
 `daily` は `(空)` と同じ日報モードのエイリアス。出力ファイル名は `reports/nippo-YYYY-MM-DD.md` を使う。
 
-残りトークンのうち `claude` / `codex` / `opencode` / `agy` / `all` は `--source` に渡す。`today` / `yesterday` / `this-week` / `last-week` / `week-before-last` / `this-month` / `last-month` / `month-before-last` は `--period` に渡す。この場合、モード既定の `--days` や `--period today` は付けない（明示された `--period` が唯一の期間指定になる）。数値があれば `--days` を置換。それ以外の文字列は `--project` に渡す。先頭単語がモード名・数値・source・period のいずれでもない場合は日報モードとして扱い、その単語を `--project` に渡す。
+残りトークンのうち `claude` / `codex` / `opencode` / `agy` / `command-code` / `all` は `--source` に渡す。`today` / `yesterday` / `this-week` / `last-week` / `week-before-last` / `this-month` / `last-month` / `month-before-last` は `--period` に渡す。この場合、モード既定の `--days` や `--period today` は付けない（明示された `--period` が唯一の期間指定になる）。数値があれば `--days` を置換。それ以外の文字列は `--project` に渡す。先頭単語がモード名・数値・source・period のいずれでもない場合は日報モードとして扱い、その単語を `--project` に渡す。
 
 `--period` を指定して `daily` を実行する場合、出力ファイル名の日付は collector が返す `meta.period.to` を使う。実行日から計算し直さない。
 

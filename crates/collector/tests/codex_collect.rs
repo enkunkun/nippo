@@ -80,11 +80,14 @@ fn collect(dir: &Path, source: &str, extra_args: &[&str]) -> Result<Value> {
         .arg(dir.join("absent-opencode"))
         .arg("--agy-dir")
         .arg(dir.join("absent-agy"))
+        .arg("--command-code-dir")
+        .arg(dir.join("absent-command-code"))
         .args(extra_args)
         .env("TZ", "Asia/Tokyo")
         .env_remove("CODEX_THREAD_ID")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("ANTIGRAVITY_CONVERSATION_ID")
+        .env_remove("COMMANDCODE_SESSION_ID")
         .output()?;
     assert!(
         output.status.success(),
